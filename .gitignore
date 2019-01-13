@@ -1,0 +1,16 @@
+yarn-error.log
+
+# package directories
+node_modules
+jspm_packages
+
+# editor
+.editorconfig
+*.swp
+.vscode
+
+.coverage
+*.log
+*.DS_Store
+*backup*
+dist

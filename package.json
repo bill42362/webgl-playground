@@ -1,0 +1,10 @@
+{
+  "name": "webgl-playground",
+  "version": "1.0.0",
+  "description": "WebGL playground with custom vertexes, shaders and auto rotation.",
+  "main": "src/server",
+  "repository": "https://github.com/bill42362/webgl-playground",
+  "author": "Pi-Yin Hsiao",
+  "license": "MIT",
+  "private": false
+}
