@@ -6,5 +6,13 @@
   "repository": "https://github.com/bill42362/webgl-playground",
   "author": "Pi-Yin Hsiao",
   "license": "MIT",
-  "private": false
+  "scripts": {
+    "start": "nodemon --exec 'node src/server' -e js,css,html --watch docs --watch src"
+  },
+  "private": false,
+  "devDependencies": {
+    "express": "^4.16.4",
+    "helmet": "^3.15.0",
+    "nodemon": "^1.18.9"
+  }
 }
