@@ -19,12 +19,13 @@ const defaultColors = `function() {
 }`;
 const defaultVertexShader = `attribute vec4 aPosition;
 attribute vec4 aColor;
-uniform mat4 uModelView;
+uniform mat4 uModel;
+uniform mat4 uView;
 uniform mat4 uProjection;
 varying lowp vec4 vColor;
 
 void main(void) {
-  gl_Position = uProjection * uModelView * aPosition;
+  gl_Position = uProjection * uModel * uView * aPosition;
   vColor = aColor;
 }
 `;
@@ -95,7 +96,8 @@ const programInfo = {
     aColor: gl.getAttribLocation(program, 'aColor'),
   },
   uniformLocations: {
-    uModelView: gl.getUniformLocation(program, 'uModelView'),
+    uModel: gl.getUniformLocation(program, 'uModel'),
+    uView: gl.getUniformLocation(program, 'uView'),
     uProjection: gl.getUniformLocation(program, 'uProjection'),
   },
 };
@@ -135,6 +137,9 @@ const uProjection = createProjection(
   farClippingPlaneDistance
 );
 
+// Model Matrix:
+const uModel = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
 // View Matrix:
 function getVectorSub (a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3], 1];
@@ -171,7 +176,7 @@ function createView (eye, lookAt, up) {
     eye[0], eye[1], eye[2], 1,
   ]);
 }
-const uModelView = createView([0.5, 0.5, 1], [0.5, 0.5, 0], [0, 1, 0]);
+const uView = createView([0.5, 0.5, 1], [0.5, 0.5, 0], [0, 1, 0]);
 
 // clear:
 gl.clearColor(0, 0, 0, 1);
@@ -226,9 +231,14 @@ gl.uniformMatrix4fv(
   uProjection
 );
 gl.uniformMatrix4fv(
-  programInfo.uniformLocations.uModelView,
+  programInfo.uniformLocations.uModel,
   false,
-  uModelView
+  uModel
+);
+gl.uniformMatrix4fv(
+  programInfo.uniformLocations.uView,
+  false,
+  uView
 );
 
 // draw:
