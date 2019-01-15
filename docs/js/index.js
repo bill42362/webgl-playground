@@ -1,10 +1,10 @@
 // index.js
 'use strict';
 
-const defaultVertexes = `function() {
+const defaultPositions = `function() {
   return [
     [
-      [0, 0, 0], [1, 0, 0], [1, 1, 0],
+      [0, 0, 0], [1, 0, 0, 1], [1, 1, 0],
       [0, 0, 0], [1, 1, 0], [0, 1, 0],
     ],
   ];
@@ -36,21 +36,14 @@ void main(void) {
 }
 `;
 
-const vertexesInput = document.getElementById('vertexes');
-vertexesInput.value = defaultVertexes;
+const positionsInput = document.getElementById('positions');
+positionsInput.value = defaultPositions;
 const colorsInput = document.getElementById('colors');
 colorsInput.value = defaultColors;
 const vertexShaderInput = document.getElementById('vertexShader');
 vertexShaderInput.value = defaultVertexShader;
 const fragmentShaderInput = document.getElementById('fragmentShader');
 fragmentShaderInput.value = defaultFragmentShader;
-
-const vertexesFunction = Function('"use strict"; return (' + vertexesInput.value + ')')();
-const vertexes = vertexesFunction();
-const colorsFunction = Function('"use strict"; return (' + colorsInput.value + ')')();
-const colors = colorsFunction();
-const vertexShaderSource = vertexShaderInput.value;
-const fragmentShaderSource = fragmentShaderInput.value;
 
 const canvas = document.getElementById('canvas');
 canvas.width = canvas.clientWidth;
@@ -70,14 +63,11 @@ function createShader (gl, sourceCode, type) {
   return shader;
 }
 
-const vertexShader = createShader(gl, vertexShaderSource, gl.VERTEX_SHADER);
-const fragmentShader = createShader(gl, fragmentShaderSource, gl.FRAGMENT_SHADER);
-
 // Program:
-function createProgram (gl, vertexShader, fragmentShader) {
+function createProgram (gl, shaders) {
   const program = gl.createProgram();
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
+  gl.attachShader(program, shaders.vertex);
+  gl.attachShader(program, shaders.fragment);
 
   gl.linkProgram(program);
 
@@ -87,45 +77,61 @@ function createProgram (gl, vertexShader, fragmentShader) {
   }
   return program;
 }
+function getLocations (gl, program) {
+  return {
+    attributes: {
+      aPosition: gl.getAttribLocation(program, 'aPosition'),
+      aColor: gl.getAttribLocation(program, 'aColor'),
+    },
+    uniforms: {
+      uProjection: gl.getUniformLocation(program, 'uProjection'),
+      uView: gl.getUniformLocation(program, 'uView'),
+      uModel: gl.getUniformLocation(program, 'uModel'),
+    },
+  };
+}
+function dockUniform (gl, locations, uniforms) {
+  gl.uniformMatrix4fv(locations.uProjection, false, uniforms.uProjection);
+  gl.uniformMatrix4fv(locations.uView, false, uniforms.uView);
+  gl.uniformMatrix4fv(locations.uModel, false, uniforms.uModel);
+}
 
-const program = createProgram(gl, vertexShader, fragmentShader);
-const programInfo = {
-  program: program,
-  attributeLocations: {
-    aPosition: gl.getAttribLocation(program, 'aPosition'),
-    aColor: gl.getAttribLocation(program, 'aColor'),
-  },
-  uniformLocations: {
-    uModel: gl.getUniformLocation(program, 'uModel'),
-    uView: gl.getUniformLocation(program, 'uView'),
-    uProjection: gl.getUniformLocation(program, 'uProjection'),
-  },
-};
-
-// Bind buffers:
-function createBuffer (gl, array) {
+// Buffers:
+function createBuffer (gl, source) {
+  const arraysFunction = Function('"use strict"; return (' + source + ')')();
+  const arrays = arraysFunction();
+  const numComponents = arrays[0][0].length;
+  // trim by first array length
+  const array = arrays.flatMap(a => a.flatMap(a => a.slice(0, numComponents)));
   const buffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(array), gl.STATIC_DRAW);
-  return buffer;
+  return {
+    buffer: buffer,
+    numComponents: numComponents,
+    count: Math.floor(array.length/numComponents),
+    type: gl.FLOAT,
+    normalize: false,
+    offset: 0,
+    // how many bytes to get from one set of values to the next
+    // 0 = use type and numComponents above
+    stride: 0,
+  };
 }
-const aPositionArray = vertexes.flatMap(a => a.flatMap(a => a));
-const aPositionBuffer = createBuffer(gl, aPositionArray);
-const aColorArray = colors.flatMap(a => a.flatMap(a => a));
-const aColorBuffer = createBuffer(gl, aColorArray);
+function dockBuffer (gl, location, buffer) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer.buffer);
+  gl.vertexAttribPointer(
+    location,
+    buffer.numComponents,
+    buffer.type,
+    buffer.normalize,
+    buffer.stride,
+    buffer.offset
+  );
+  gl.enableVertexAttribArray(location);
+}
 
 // Projection Matrix:
-function createProjection (fieldOfViewInRadians, aspectRatio, near, far) {
-  const f = 1.0 / Math.tan(fieldOfViewInRadians / 2);
-  const rangeInv = 1 / (near - far);
- 
-  return [
-    f / aspectRatio, 0,                         0,   0,
-                  0, f,                         0,   0,
-                  0, 0,   (near + far) * rangeInv,  -1,
-                  0, 0, near * far * rangeInv * 2,   0,
-  ];
-}
 const fieldOfViewInRadians = Math.PI * 0.5; // 45°
 const aspectRatio = canvas.clientWidth / canvas.clientHeight;
 const nearClippingPlaneDistance = 1;
@@ -137,10 +143,132 @@ const uProjection = createProjection(
   farClippingPlaneDistance
 );
 
+// View Matrix:
+const eye = [0.5, 0.5, 1];
+const lookAt = [0.5, 0.5, 0];
+const up = [0, 1, 0];
+const uView = createView(eye, lookAt, up);
+
 // Model Matrix:
 const uModel = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-// View Matrix:
+const glState = {
+  sources: {
+    attributes: {
+      position: null,
+      color: null,
+    },
+    shaders: {
+      vertex: null,
+      fragment: null,
+    },
+  },
+  program: null,
+  shaders: { vertex: null, fragment: null },
+  locations: {
+    attributes: { aPosition: null, aColor: null },
+    uniforms: { uProjection: null, uView: null, uModel: null },
+  },
+  buffers: { aPosition: null, aColor: null },
+  uniforms: { uProjection: uProjection, uView: uView, uModel: uModel },
+};
+
+function nextFrame () {
+  let isPositionBufferChanged = false;
+  if (positionsInput.value !== glState.sources.attributes.position) {
+    try {
+      glState.sources.attributes.position = positionsInput.value;
+      glState.buffers.aPosition = createBuffer(gl, glState.sources.attributes.position);
+      isPositionBufferChanged = true;
+    } catch (error) {
+      console.log('Create position buffer fail. error:', error);
+    }
+  }
+
+  let isColorBufferChanged = false;
+  if (colorsInput.value !== glState.sources.attributes.color) {
+    try {
+      glState.sources.attributes.color = colorsInput.value;
+      glState.buffers.aColor = createBuffer(gl, glState.sources.attributes.color);
+      isColorBufferChanged = true;
+    } catch (error) {
+      console.log('Create color buffer fail. error:', error);
+    }
+  }
+
+  let isShaderChanged = false;
+  if (vertexShaderInput.value !== glState.sources.shaders.vertex) {
+    try {
+      glState.sources.shaders.vertex = vertexShaderInput.value;
+      const vertexShader = createShader(gl, glState.sources.shaders.vertex, gl.VERTEX_SHADER);
+      glState.shaders.vertex = vertexShader;
+      isShaderChanged = true;
+    } catch (error) {
+      console.log('Compile vertex shader fail. error:', error);
+    }
+  }
+  if (fragmentShaderInput.value !== glState.sources.shaders.fragment) {
+    try {
+      glState.sources.shaders.fragment = fragmentShaderInput.value;
+      const fragmentShader = createShader(gl, glState.sources.shaders.fragment, gl.FRAGMENT_SHADER);
+      glState.shaders.fragment = fragmentShader;
+      isShaderChanged = true;
+    } catch (error) {
+      console.log('Compile fragment shader fail. error:', error);
+    }
+  }
+
+  if (isShaderChanged) {
+    glState.program = createProgram(gl, glState.shaders);
+    glState.locations = getLocations(gl, glState.program);
+  }
+
+  if (isShaderChanged || isPositionBufferChanged) {
+    dockBuffer(
+      gl,
+      glState.locations.attributes.aPosition,
+      glState.buffers.aPosition
+    );
+  }
+
+  if (isShaderChanged || isColorBufferChanged) {
+    dockBuffer(
+      gl,
+      glState.locations.attributes.aColor,
+      glState.buffers.aColor
+    );
+  }
+
+  // clear:
+  gl.clearColor(0, 0, 0, 1);
+  gl.clearDepth(1);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // draw:
+  gl.useProgram(glState.program);
+  dockUniform(gl, glState.locations.uniforms, glState.uniforms);
+
+  const offset = 0;
+  const vertexCount = glState.buffers.aPosition.count;
+  gl.drawArrays(gl.TRIANGLES, offset, vertexCount);
+}
+
+nextFrame();
+
+// Matrix:
+function createProjection (fieldOfViewInRadians, aspectRatio, near, far) {
+  const f = 1.0 / Math.tan(fieldOfViewInRadians / 2);
+  const rangeInv = 1 / (near - far);
+ 
+  return [
+    f / aspectRatio, 0,                         0,   0,
+                  0, f,                         0,   0,
+                  0, 0,   (near + far) * rangeInv,  -1,
+                  0, 0, near * far * rangeInv * 2,   0,
+  ];
+}
 function getVectorSub (a, b) {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3], 1];
 }
@@ -175,75 +303,4 @@ function createView (eye, lookAt, up) {
     z[0], z[1], z[2], 0,
     eye[0], eye[1], eye[2], 1,
   ]);
-}
-const uView = createView([0.5, 0.5, 1], [0.5, 0.5, 0], [0, 1, 0]);
-
-// clear:
-gl.clearColor(0, 0, 0, 1);
-gl.clearDepth(1);
-gl.enable(gl.DEPTH_TEST);
-gl.depthFunc(gl.LEQUAL);
-gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-// vertex:
-{ 
-  const numComponents = 3;  // pull out 3 values per iteration
-  const type = gl.FLOAT;    // the data in the buffer is 32bit floats
-  const normalize = false;  // don't normalize
-  const stride = 0;         // how many bytes to get from one set of values to the next
-                            // 0 = use type and numComponents above
-  const offset = 0;         // how many bytes inside the buffer to start from
-  gl.bindBuffer(gl.ARRAY_BUFFER, aPositionBuffer);
-  gl.vertexAttribPointer(
-    programInfo.attributeLocations.aPosition,
-    numComponents,
-    type,
-    normalize,
-    stride,
-    offset
-  );
-  gl.enableVertexAttribArray(programInfo.attributeLocations.aPosition);
-}
-
-// color:
-{ 
-  const numComponents = 4;
-  const type = gl.FLOAT;
-  const normalize = false;
-  const stride = 0;
-  const offset = 0;
-  gl.bindBuffer(gl.ARRAY_BUFFER, aColorBuffer);
-  gl.vertexAttribPointer(
-    programInfo.attributeLocations.aColor,
-    numComponents,
-    type,
-    normalize,
-    stride,
-    offset
-  );
-  gl.enableVertexAttribArray(programInfo.attributeLocations.aColor);
-}
-
-gl.useProgram(programInfo.program);
-gl.uniformMatrix4fv(
-  programInfo.uniformLocations.uProjection,
-  false,
-  uProjection
-);
-gl.uniformMatrix4fv(
-  programInfo.uniformLocations.uModel,
-  false,
-  uModel
-);
-gl.uniformMatrix4fv(
-  programInfo.uniformLocations.uView,
-  false,
-  uView
-);
-
-// draw:
-{
-  const offset = 0;
-  const vertexCount = 6;
-  gl.drawArrays(gl.TRIANGLES, offset, vertexCount);
 }
