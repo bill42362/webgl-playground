@@ -4,8 +4,8 @@
 const defaultPositions = `function() {
   return [
     [
-      [0, 0, 0], [1, 0, 0, 1], [1, 1, 0],
-      [0, 0, 0], [1, 1, 0], [0, 1, 0],
+      [-1, -1, -1], [1, -1, -1, 1], [1, 1, -1],
+      [-1, -1, -1], [1, 1, -1], [-1, 1, -1],
     ],
   ];
 }`;
@@ -25,7 +25,7 @@ uniform mat4 uProjection;
 varying lowp vec4 vColor;
 
 void main(void) {
-  gl_Position = uProjection * uModel * uView * aPosition;
+  gl_Position = uProjection * uView * uModel * aPosition;
   vColor = aColor;
 }
 `;
@@ -179,9 +179,9 @@ const uProjection = createProjection(
 );
 
 // View Matrix:
-const eye = [0.5, 0.5, 5];
-const lookAt = [0.5, 0.5, 0];
-const up = [0, 1, 0];
+let eye = [2, 3, 4];
+let lookAt = [0, 0, 0];
+let up = [-4, -2, -3];
 const uView = createView(eye, lookAt, up);
 
 const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -221,7 +221,7 @@ const axisGlState = {
 axisGlState.program = createProgram(gl, axisGlState.shaders);
 axisGlState.locations = getLocations(gl, axisGlState.program);
 
-function nextFrame () {
+function nextFrame (timestamp) {
   let isPositionBufferChanged = false;
   if (positionsInput.value !== glState.sources.attributes.position) {
     try {
@@ -291,6 +291,7 @@ function nextFrame () {
     axisGlState.buffers.aColor
   );
   dockUniform(gl, axisGlState.locations.uniforms, axisGlState.uniforms);
+  axisGlState.uniforms.uView = createView(eye, lookAt, up);
   gl.drawArrays(gl.LINES, 0, axisGlState.buffers.aPosition.count);
 
   gl.useProgram(glState.program);
@@ -304,6 +305,8 @@ function nextFrame () {
     glState.locations.attributes.aColor,
     glState.buffers.aColor
   );
+  glState.uniforms.uModel = getTurnXYZMatrix(timestamp/1000, timestamp/3000, timestamp/4000);
+  glState.uniforms.uView = createView(eye, lookAt, up);
   dockUniform(gl, glState.locations.uniforms, glState.uniforms);
 
   const offset = 0;
@@ -311,7 +314,22 @@ function nextFrame () {
   gl.drawArrays(gl.TRIANGLES, offset, vertexCount);
 }
 
-nextFrame();
+const fps = 30;
+const fpsInterval = 1000/fps;
+let lastFrameTimestamp = Date.now();
+// https://stackoverflow.com/a/19772220
+function animate (timestamp) {
+  window.requestAnimationFrame(animate);
+
+  const now = Date.now();
+  const elapsed = now - lastFrameTimestamp;
+  if (elapsed > fpsInterval) {
+    lastFrameTimestamp = now - (elapsed % fpsInterval);
+    nextFrame(timestamp);
+  }
+}
+
+animate(lastFrameTimestamp);
 
 // Matrix:
 function createProjection (fieldOfViewInRadians, aspectRatio, near, far) {
@@ -359,4 +377,57 @@ function createView (eye, lookAt, up) {
     z[0], z[1], z[2], 0,
     eye[0], eye[1], eye[2], 1,
   ]);
+}
+function getMatrixMulMatrix (a, b) {
+  return [
+    a[ 0]*b[ 0] + a[ 1]*b[ 4] + a[ 2]*b[ 8] + a[ 3]*b[12],
+    a[ 0]*b[ 1] + a[ 1]*b[ 5] + a[ 2]*b[ 9] + a[ 3]*b[13],
+    a[ 0]*b[ 2] + a[ 1]*b[ 6] + a[ 2]*b[10] + a[ 3]*b[14],
+    a[ 0]*b[ 3] + a[ 1]*b[ 7] + a[ 2]*b[11] + a[ 3]*b[15],
+
+    a[ 4]*b[ 0] + a[ 5]*b[ 4] + a[ 6]*b[ 8] + a[ 7]*b[12],
+    a[ 4]*b[ 1] + a[ 5]*b[ 5] + a[ 6]*b[ 9] + a[ 7]*b[13],
+    a[ 4]*b[ 2] + a[ 5]*b[ 6] + a[ 6]*b[10] + a[ 7]*b[14],
+    a[ 4]*b[ 3] + a[ 5]*b[ 7] + a[ 6]*b[11] + a[ 7]*b[15],
+
+    a[ 8]*b[ 0] + a[ 9]*b[ 4] + a[10]*b[ 8] + a[11]*b[12],
+    a[ 8]*b[ 1] + a[ 9]*b[ 5] + a[10]*b[ 9] + a[11]*b[13],
+    a[ 8]*b[ 2] + a[ 9]*b[ 6] + a[10]*b[10] + a[11]*b[14],
+    a[ 8]*b[ 3] + a[ 9]*b[ 7] + a[10]*b[11] + a[11]*b[15],
+
+    a[12]*b[ 0] + a[13]*b[ 4] + a[14]*b[ 8] + a[15]*b[12],
+    a[12]*b[ 1] + a[13]*b[ 5] + a[14]*b[ 9] + a[15]*b[13],
+    a[12]*b[ 2] + a[13]*b[ 6] + a[14]*b[10] + a[15]*b[14],
+    a[12]*b[ 3] + a[13]*b[ 7] + a[14]*b[11] + a[15]*b[15],
+  ];
+}
+function makeTurnPitchMatrix (angle) {
+  return [
+    Math.cos(angle), 0, Math.sin(angle), 0,
+    0, 1, 0, 0,
+    -Math.sin(angle), 0, Math.cos(angle), 0,
+    0, 0, 0, 1
+  ];
+}
+function makeTurnRollMatrix (angle) {
+  return [
+    1, 0, 0, 0,
+    0, Math.cos(angle), -Math.sin(angle), 0,
+    0, Math.sin(angle), Math.cos(angle), 0,
+    0, 0, 0, 1
+  ];
+}
+function makeTurnYawMatrix (angle) {
+  return [
+    Math.cos(angle), -Math.sin(angle), 0, 0,
+    Math.sin(angle), Math.cos(angle), 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+  ];
+}
+function getTurnXYZMatrix (x, y, z) {
+  return getMatrixMulMatrix(
+    getMatrixMulMatrix(makeTurnPitchMatrix(x), makeTurnRollMatrix(y)),
+    makeTurnYawMatrix(z)
+  );
 }
