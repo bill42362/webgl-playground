@@ -45,6 +45,34 @@ vertexShaderInput.value = defaultVertexShader;
 const fragmentShaderInput = document.getElementById('fragmentShader');
 fragmentShaderInput.value = defaultFragmentShader;
 
+const axisPositions = [
+  Array(21).fill(0).map((_, index) => [[index - 10, -11, 0], [index - 10, 11, 0]]), // y axis
+  Array(21).fill(0).map((_, index) => [[-11, index - 10, 0], [11, index - 10, 0]]), // x axis
+  [[[0, 0, -11], [0, 0, 11]]] // z axis
+].flatMap(a => a.flatMap(a => a.flatMap(a => a)));
+const axisPositionsArray = { array: axisPositions, numComponents: 3, count: 86 };
+const axisColors = [
+  Array(21).fill(0).map((_, index) => [[0, 0.5, 1, 0.5], [0, 0.5, 1, 0.5]]),
+  Array(21).fill(0).map((_, index) => [[0, 1, 0.5, 0.5], [0, 1, 0.5, 0.5]]),
+  [[[0.5, 0.5, 0, 0.5], [0.5, 0.5, 0, 0.5]]]
+].flatMap(a => a.flatMap(a => a.flatMap(a => a)));
+const axisColorsArray = { array: axisColors, numComponents: 4, count: 86 };
+const axisVertexShader = `attribute vec4 aPosition;
+attribute vec4 aColor;
+uniform mat4 uView;
+uniform mat4 uProjection;
+varying lowp vec4 vColor;
+void main(void) {
+  gl_Position = uProjection * uView * aPosition;
+  vColor = aColor;
+}
+`;
+const axisFragmentShader = `varying lowp vec4 vColor;
+void main(void) {
+  gl_FragColor = vColor;
+}
+`;
+
 const canvas = document.getElementById('canvas');
 canvas.width = canvas.clientWidth;
 canvas.height = canvas.clientHeight;
@@ -97,19 +125,26 @@ function dockUniform (gl, locations, uniforms) {
 }
 
 // Buffers:
-function createBuffer (gl, source) {
+function makeArray (source) {
   const arraysFunction = Function('"use strict"; return (' + source + ')')();
   const arrays = arraysFunction();
   const numComponents = arrays[0][0].length;
   // trim by first array length
   const array = arrays.flatMap(a => a.flatMap(a => a.slice(0, numComponents)));
-  const buffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(array), gl.STATIC_DRAW);
   return {
-    buffer: buffer,
+    array: array,
     numComponents: numComponents,
     count: Math.floor(array.length/numComponents),
+  };
+}
+function createBuffer (gl, array) {
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(array.array), gl.STATIC_DRAW);
+  return {
+    buffer: buffer,
+    numComponents: array.numComponents,
+    count: array.count,
     type: gl.FLOAT,
     normalize: false,
     offset: 0,
@@ -134,7 +169,7 @@ function dockBuffer (gl, location, buffer) {
 // Projection Matrix:
 const fieldOfViewInRadians = Math.PI * 0.5; // 45°
 const aspectRatio = canvas.clientWidth / canvas.clientHeight;
-const nearClippingPlaneDistance = 1;
+const nearClippingPlaneDistance = 0.1;
 const farClippingPlaneDistance = 50;
 const uProjection = createProjection(
   fieldOfViewInRadians,
@@ -144,13 +179,12 @@ const uProjection = createProjection(
 );
 
 // View Matrix:
-const eye = [0.5, 0.5, 1];
+const eye = [0.5, 0.5, 5];
 const lookAt = [0.5, 0.5, 0];
 const up = [0, 1, 0];
 const uView = createView(eye, lookAt, up);
 
-// Model Matrix:
-const uModel = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 const glState = {
   sources: {
@@ -170,15 +204,29 @@ const glState = {
     uniforms: { uProjection: null, uView: null, uModel: null },
   },
   buffers: { aPosition: null, aColor: null },
-  uniforms: { uProjection: uProjection, uView: uView, uModel: uModel },
+  uniforms: { uProjection: uProjection, uView: uView, uModel: identity },
 };
+
+const axisGlState = {
+  shaders: {
+    vertex: createShader(gl, axisVertexShader, gl.VERTEX_SHADER),
+    fragment: createShader(gl, axisFragmentShader, gl.FRAGMENT_SHADER),
+  },
+  buffers: {
+    aPosition: createBuffer(gl, axisPositionsArray),
+    aColor: createBuffer(gl, axisColorsArray),
+  },
+  uniforms: { uProjection: uProjection, uView: uView, uModel: identity },
+};
+axisGlState.program = createProgram(gl, axisGlState.shaders);
+axisGlState.locations = getLocations(gl, axisGlState.program);
 
 function nextFrame () {
   let isPositionBufferChanged = false;
   if (positionsInput.value !== glState.sources.attributes.position) {
     try {
       glState.sources.attributes.position = positionsInput.value;
-      glState.buffers.aPosition = createBuffer(gl, glState.sources.attributes.position);
+      glState.buffers.aPosition = createBuffer(gl, makeArray(glState.sources.attributes.position));
       isPositionBufferChanged = true;
     } catch (error) {
       console.log('Create position buffer fail. error:', error);
@@ -189,7 +237,7 @@ function nextFrame () {
   if (colorsInput.value !== glState.sources.attributes.color) {
     try {
       glState.sources.attributes.color = colorsInput.value;
-      glState.buffers.aColor = createBuffer(gl, glState.sources.attributes.color);
+      glState.buffers.aColor = createBuffer(gl, makeArray(glState.sources.attributes.color));
       isColorBufferChanged = true;
     } catch (error) {
       console.log('Create color buffer fail. error:', error);
@@ -223,22 +271,6 @@ function nextFrame () {
     glState.locations = getLocations(gl, glState.program);
   }
 
-  if (isShaderChanged || isPositionBufferChanged) {
-    dockBuffer(
-      gl,
-      glState.locations.attributes.aPosition,
-      glState.buffers.aPosition
-    );
-  }
-
-  if (isShaderChanged || isColorBufferChanged) {
-    dockBuffer(
-      gl,
-      glState.locations.attributes.aColor,
-      glState.buffers.aColor
-    );
-  }
-
   // clear:
   gl.clearColor(0, 0, 0, 1);
   gl.clearDepth(1);
@@ -247,7 +279,31 @@ function nextFrame () {
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   // draw:
+  gl.useProgram(axisGlState.program);
+  dockBuffer(
+    gl,
+    axisGlState.locations.attributes.aPosition,
+    axisGlState.buffers.aPosition
+  );
+  dockBuffer(
+    gl,
+    axisGlState.locations.attributes.aColor,
+    axisGlState.buffers.aColor
+  );
+  dockUniform(gl, axisGlState.locations.uniforms, axisGlState.uniforms);
+  gl.drawArrays(gl.LINES, 0, axisGlState.buffers.aPosition.count);
+
   gl.useProgram(glState.program);
+  dockBuffer(
+    gl,
+    glState.locations.attributes.aPosition,
+    glState.buffers.aPosition
+  );
+  dockBuffer(
+    gl,
+    glState.locations.attributes.aColor,
+    glState.buffers.aColor
+  );
   dockUniform(gl, glState.locations.uniforms, glState.uniforms);
 
   const offset = 0;
